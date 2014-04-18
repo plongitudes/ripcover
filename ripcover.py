@@ -2,6 +2,7 @@
 
 import argparse
 import fnmatch
+import logging
 import os
 import rarfile
 import re
@@ -9,6 +10,19 @@ import string
 import zipfile
 
 # source, output dir and global array for unreadable archives
+
+logger = logging.getLogger('simple_example')
+logger.setLevel(logging.DEBUG)
+fh = logging.FileHandler('debug.log')
+fh.setLevel(logging.DEBUG)
+ch = logging.StreamHandler()
+ch.setLevel(logging.INFO)
+formatter = logging.Formatter("%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s")
+fh.setFormatter(formatter)
+ch.setFormatter(formatter)
+logger.addHandler(fh)
+logger.addHandler(ch)
+
 source_dir = ''
 destination_dir = ''
 existing_files = []
@@ -23,14 +37,14 @@ def parse_the_args():
 
 # test for ouput path and create if missing
 def test_output(path):
-    #print ("entering dirtest")
+    logger.debug("entering dirtest")
     if not os.path.exists(path):
         os.makedirs(path)
     return path
 
 # walk the folder tree and find all files marked as comic archives
 def find_all_files(path):
-    #print ("entering find all files")
+    logger.debug("entering find all files")
     filelist = []
     for root, dirnames, filenames in os.walk(path):
         for filename in filenames:
@@ -41,12 +55,11 @@ def find_all_files(path):
 
 # grab all existing files and put them in a list
 def skip_existing(testfile):
-    #print ("entering test")
+    logger.debug("testing " + testfile + " against existing files in archive")
     for item in existing_files:
         against, against_ext = os.path.splitext(os.path.basename(testfile))
-        #print ("testing " + item + " against " + against)
         if (item == against):
-            print (testfile + " is valid, but already exists. skipping!")
+            logger.info(testfile + " is valid, but already exists. skipping!")
             return 1
     return 0
 
@@ -54,13 +67,13 @@ def skip_existing(testfile):
 def test_for_cbr_cbz(incoming_archive):
     r = 0
     if zipfile.is_zipfile(incoming_archive):
-        #print ("zip")
+        logger.debug(incoming_archive + " is a zip")
         r = 1
     elif rarfile.is_rarfile(incoming_archive):
-        #print ("rar")
+        logger.debug(incoming_archive + " is a rar")
         r = 2
     else:
-        badfiles.append("neither a zip nor a rar! " + incoming_archive)
+        logger.warn(incoming_archive + "is neither a zip nor a rar!")
         r = 3
     return r
 
@@ -74,36 +87,32 @@ def unzip_and_rip(archive, kind, source_dir, destination_dir):
         comic = zipfile.ZipFile(archive)
         try:
             if comic.testzip() is None:
+                logger.debug("zipfile tested ok: " + archive)
                 goahead = 1
         except zipfile.BadZipfile:
-            # add bad files to the list
-            print ("Bad Zip: " + archive)
-            badfiles.append("bad zip:" + archive)
+            logger.error("Bad Zip: " + archive)
             goahead = 0
         except:
-            print ("unspecified zip error: " + archive)
-            badfiles.append("unspecified zip error:" + archive)
+            logger.warn("unspecified zip error:" + archive)
             goahead = 1
     # otherwise, it must be a rar
     elif (kind == 2):
         comic = rarfile.RarFile(archive)
         try:
             if comic.testrar() is None:
+                logger.debug("rarfile tested ok: " + archive)
                 goahead = 1
         except rarfile.RarCRCError:
-            # add bad files to the list
-            print ("Bad RAR CRC: " + archive)
-            badfiles.append("Bad RAR CRC: " + archive)
+            logger.error("Bad RAR CRC: " + archive)
             goahead = 0
         except rarfile.RarWarning:
-            print ("RAR file warning: " + archive)
-            badfiles.append("RAR file warning: " + archive)
+            logger.warn("RAR file warning: " + archive)
             goahead = 1
     elif (kind == 3):
-        print ("Bad file: " + archive)
+        logger.error("Bad file: " + archive)
         goahead = 0
     else:
-        print("totally unexpected input! exiting.")
+        logger.critical("totally unexpected input! exiting.")
         os._exit(1)
 
     if goahead:
@@ -113,7 +122,8 @@ def unzip_and_rip(archive, kind, source_dir, destination_dir):
         # the first image file we encounter is likely
         # the cover image
         contents = sorted(comic.namelist())
-        #print (contents)
+        logger.debug("contents of sorted list:")
+        logger.debug(contents)
         found_image = 0
         current_image = ''
         # find first image in the sorted list
@@ -125,8 +135,10 @@ def unzip_and_rip(archive, kind, source_dir, destination_dir):
                 found_image = 1
 
                 # open the comic object and a binary filehandle
+                logger.debug("opening archive")
                 filelikeobject = comic.open(item)
                 # this returns the bytes of the file
+                logger.debug("reading file from archive")
                 binaryfile = comic.read(item)
 
                 # do some name mangling so that we can name the image as
@@ -141,15 +153,19 @@ def unzip_and_rip(archive, kind, source_dir, destination_dir):
                 plaindest = comic_name + extracted_ext
 
                 # do the actual writing
-                print (archive.decode("utf-8") + " is valid, saving " + extracted_name + " as " + plaindest)
+                logger.info(archive.decode("utf-8") + " is valid, saving " + extracted_name + " as " + plaindest)
+                logger.debug("opening binary file for writing")
                 newfile = open(finaldest, 'wb+')
+                logger.debug("writing binary file")
                 newfile.write(binaryfile)
+                logger.debug("closing binary file")
                 newfile.close()
+                logger.debug("closing archive")
                 comic.close()
-
                 break
+
         if not found_image:
-            print ("never found a valid imagetype in " + current_image)
+            logger.critical("never found a valid imagetype in " + archive)
             os._exit(1)
         
 
@@ -166,29 +182,30 @@ def main():
 
         destination_dir = test_output(destination_dir)
         all_comics = find_all_files(source_dir)
-        #print ("all comics are")
-        #print (all_comics)
+        logger.debug("all comics are")
+        logger.debug(all_comics)
 
         for file in os.listdir(destination_dir):
             item_to_add, item_to_add_ext = os.path.splitext(os.path.basename(file))
             existing_files.append(item_to_add)
-            #print ("adding " + item_to_add)
-        #print("we have ")
-        #print(existing_files)
+            logger.debug("adding " + item_to_add)
+        logger.debug("we have the following cover images already:")
+        logger.debug(existing_files)
 
         for file in all_comics:
-            #print ("starting to do skip test")
+            logger.debug("starting to do skip test")
             if not skip_existing(file):
-                #print ("skip test was false")
-                #print ("testing archive")
+                logger.debug("skip test was false")
+                logger.debug("testing archive")
                 valid_archive = test_for_cbr_cbz(file)
-                #print ("back from testing")
+                logger.debug("back from validating archive integrity")
                 if (valid_archive > 0):
+                    logger.debug("archive is good as far as we can tell, proceeding to delve inside")
                     unzip_and_rip(file, valid_archive, source_dir, destination_dir)
                 else: 
-                    print (file + " not a valid comic archive.")
-                    #badfiles.append(archive)
+                    logger.info("not a valid comic archive: " + file)
 
+        '''
         if badfiles:
             if os.path.exists(destination_dir + '/error.log'):
                 badlog = open(destination_dir + '/error.log', 'a')
@@ -198,6 +215,7 @@ def main():
             for line in badfiles:
                 badlog.write(line + '\n')
             badlog.close()
+        '''
     else:
         parser.print_usage()
 main()
